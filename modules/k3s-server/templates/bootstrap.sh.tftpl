@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# K3s bootstrap, rendered by Terraform for node {{ node_name }}.
+#
+# NOT EDIT THIS FILE. Terraform overwrites it on every apply. Change the
+# template in modules/k3s-server/templates/ instead.
+set -euo pipefail
+
+NODE_NAME="{{ node_name }}"
+NODE_ROLE="{{ node_role }}"
+NODE_ADDRESS="{{ node_address }}"
+K3S_VERSION="{{ k3s_version }}"
+BRIDGE_NAME="{{ bridge_name }}"
+INSTALL_DOCKER={{ if install_docker }}"true"{{ else }}"false"{{ end }}
+ALLOW_INSECURE={{ if allow_insecure }}"true"{{ else }}"false"{{ end }}
+
+log() { printf '[bootstrap %s] %s\n' "$NODE_NAME" "$*" >&2; }
+die() { log "FATAL: $*"; exit 1; }
+
+[ "$(id -u)" -eq 0 ] || die "must run as root"
+
+# --- Preflight -------------------------------------------------------------
+
+log "preflight"
+command -v curl >/dev/null || die "curl is not installed"
+command -v systemctl >/dev/null || die "systemd is not available; K3s requires it"
+
+# k3s has no opinion about the host's forwarding sysctls and will silently
+# produce a cluster where pods cannot reach each other. Setting them here means
+# the failure does not get attributed to K3s.
+for setting in net.ipv4.ip_forward net.bridge.bridge-nf-call-iptables; do
+  if ! sysctl -n "$setting" 2>/dev/null | grep -qx 1; then
+    log "enabling $setting"
+    sysctl -qw "$setting=1" || log "WARNING: could not set $setting"
+  fi
+done
+
+if ! ip link show "$BRIDGE_NAME" >/dev/null 2>&1; then
+  die "bridge $BRIDGE_NAME does not exist; apply the network-bridge module first"
+fi
+
+# --- Install ---------------------------------------------------------------
+
+# The token never appears in a log line or in `set -x` output. It is passed
+# through the environment, not interpolated into the command.
+# The token is exported so the installer can read it, and passed explicitly to
+# the sh invocation as well, because the K3s installer does not reliably
+# inherit the environment through a pipe.
+export INSTALL_K3S_VERSION="$K3S_VERSION"
+
+flags=(
+  "--node-ip=$NODE_ADDRESS"
+  "--node-name=$NODE_NAME"
+  "--node-external-ip=$NODE_ADDRESS"
+  "--write-kubeconfig-mode=0600"
+  "--tls-san={{ api_endpoint }}"
+)
+
+if [ "$NODE_ROLE" = "server" ]; then
+  flags+=(
+    "--cluster-init"
+    "--cluster-cidr={{ pod_cidr }}"
+    "--service-cidr={{ service_cidr }}"
+    "--disable=traefik"
+    "--disable=servicelb"
+  )
+else
+  flags+=("--server=https://{{ api_endpoint }}")
+fi
+
+log "installing k3s $K3S_VERSION as $NODE_ROLE on $NODE_ADDRESS"
+
+# The token is passed as an environment assignment to the installer rather than
+# interpolated into the command line, so it does not appear in `ps` output for
+# any user on the box.
+# $${flags[@]} is bash array expansion, not Terraform interpolation. templatefile
+# would otherwise evaluate flags[@] and fail with "invalid character" on '['.
+curl -sfL "{{ registration_command }}" | \
+  INSTALL_K3S_VERSION="$K3S_VERSION" \
+  K3S_TOKEN="$K3S_TOKEN" \
+  sh -s - "$${flags[@]}" || die "k3s installation failed"
+
+# --- Optional extras -------------------------------------------------------
+
+if [ "$INSTALL_DOCKER" = "true" ]; then
+  log "installing Docker"
+  curl -fsSL https://get.docker.com | sh || log "WARNING: Docker install failed"
+fi
+
+if [ "$ALLOW_INSECURE" = "true" ]; then
+  log "WARNING: insecure registry pulls enabled. Do not do this outside a lab."
+fi
+
+# --- Verify ----------------------------------------------------------------
+
+systemctl is-active --quiet k3s || die "k3s service is not active after install"
+log "k3s service active"
+
+if [ "$NODE_ROLE" = "server" ]; then
+  export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+  for _ in $(seq 1 60); do
+    if kubectl get --raw=/readyz >/dev/null 2>&1; then
+      log "control plane ready"
+      break
+    fi
+    sleep 5
+  done
+fi
+
+log "bootstrap complete for $NODE_NAME ($NODE_ROLE)"

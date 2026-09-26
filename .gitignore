@@ -1,0 +1,52 @@
+# ---- Terraform state and local caches -------------------------------------
+# State contains the generated cluster token. It must never be committed.
+.terraform/
+.terraform.tfstate.lock.info
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Local backend directory, if anyone tries it. A state directory in the repo is
+# a credential leak, not a convenience.
+terraform.tfstate.d/
+
+# Plan files. These routinely contain resource attributes in clear text.
+*.tfplan
+tfplan
+*.tfplan.*
+
+# ---- Variable files --------------------------------------------------------
+# Real values are environment-specific and sometimes secret. Examples are not.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# ---- Rendered artefacts ---------------------------------------------------
+# Bootstrap scripts contain the cluster token in clear text. Generated scripts
+# are written next to the module that renders them, and the module directories
+# hold templates that must be committed, so the generated ones are excluded by
+# name rather than by whole-directory rule.
+artifacts/
+**/artifacts/
+scripts/
+**/scripts/
+*.rendered.sh
+*-bootstrap.sh
+bridge-*.sh
+
+# ---- Crash logs -----------------------------------------------------------
+crash.*.log
+
+# ---- Python (test suite) --------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# ---- Editors and OS -------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

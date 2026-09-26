@@ -1,0 +1,32 @@
+# Production environment. Copy to terraform.tfvars and fill in.
+#
+#   cp environments/production/terraform.tfvars.example environments/production/terraform.tfvars
+#
+# This example is committed; the real file must never be, which is why
+# .gitignore excludes terraform.tfvars but not *.example.
+
+project_name = "CHANGE-ME"
+environment  = "production"
+
+# Three control plane nodes. Odd, because an even count buys no additional
+# quorum: three and four survive the same single failure.
+k3s_version         = "v1.31.4+k3s1"
+control_plane_nodes = 3
+agent_nodes         = 3
+
+node_cidr    = "10.20.0.0/24"
+node_gateway = "10.20.0.1"
+
+# Production runs the real MTU. The lab drops to 1400 for nested virtualisation.
+bridge_name = "br-prod0"
+pod_cidr    = "10.244.0.0/16"
+service_cidr = "10.96.0.0/16"
+
+# Both of these stay false in production. The variable validation and the
+# module comments both say why.
+enable_docker_install = false
+allow_insecure_images = false
+
+# A pinned internal mirror rather than the public installer, so a production
+# apply does not depend on a third party's uptime.
+registration_command = "https://mirror.internal.example/k3s-install.sh"
